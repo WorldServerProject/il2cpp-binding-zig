@@ -1,2 +1,5 @@
 *.dll
 *.obj
+DummyDll/
+script.json
+stringliteral.json
