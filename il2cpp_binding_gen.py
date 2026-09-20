@@ -99,6 +99,48 @@ def clean_type_spelling(spelling: str) -> str:
     )
 
 
+def collect_flattened_fields(record_node, layer_name=None, depth=0, visited=None):
+    """递归收集结构体及其多层继承基类的字段，支持展平和层级记录"""
+    if visited is None:
+        visited = set()
+    
+    node_id = hash(record_node)
+    if node_id in visited:
+        return []
+    visited.add(node_id)
+
+    base_blocks = []
+    for child in record_node.get_children():
+        if child.kind == CursorKind.CXX_BASE_SPECIFIER:
+            base_type = child.type
+            base_decl = base_type.get_declaration()
+            b_name = clean_type_spelling(base_type.spelling)
+            if base_decl and base_decl.is_definition():
+                sub_blocks = collect_flattened_fields(base_decl, layer_name=b_name, depth=depth + 1, visited=visited)
+                base_blocks.extend(sub_blocks)
+
+    current_fields = []
+    for child in record_node.get_children():
+        if child.kind == CursorKind.FIELD_DECL:
+            field_name = fix_zig_keyword_name(child.spelling)
+            field_type = map_type(child.type)
+            if field_name:
+                current_fields.append((field_name, field_type))
+
+    result = []
+    result.extend(base_blocks)
+    
+    this_layer_name = layer_name if layer_name else record_node.spelling
+    if current_fields or not base_blocks:
+        result.append({
+            'layer_name': this_layer_name,
+            'depth': depth,
+            'fields': current_fields
+        })
+
+    return result
+
+
 def map_type(c_type: cindex.Type) -> str:
     """递归将 libclang 的 Type 节点映射为 Zig 类型"""
     # 1. 优先匹配 stdint 别名
@@ -223,12 +265,13 @@ class AstToZigGenerator:
             )
             self.emit(f'pub const {name} = {decl_kind} {{')
 
-            # 遍历结构体字段 (FIELD_DECL)
-            for child in node.get_children():
-                if child.kind == CursorKind.FIELD_DECL:
-                    field_name = fix_zig_keyword_name(child.spelling)
-                    field_type = map_type(child.type)
-                    self.emit(f'    {field_name}: {field_type},')
+            # 遍历结构体字段 (支持多层继承展平与层级注释)
+            blocks = collect_flattened_fields(node)
+            for block in blocks:
+                if block['fields']:
+                    self.emit(f'    // Layer {block["depth"]}: {block["layer_name"]}')
+                    for field_name, field_type in block['fields']:
+                        self.emit(f'    {field_name}: {field_type},')
 
             self.emit('};\n')
 
