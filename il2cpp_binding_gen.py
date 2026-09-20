@@ -99,6 +99,31 @@ def clean_type_spelling(spelling: str) -> str:
     )
 
 
+def resolve_field_collisions(blocks):
+    """检测并解决多层继承中的字段重名冲突，重名时自动添加各自结构体/层级名称作为前缀"""
+    field_counts = {}
+    for block in blocks:
+        for fname, ftype in block['fields']:
+            field_counts[fname] = field_counts.get(fname, 0) + 1
+
+    new_blocks = []
+    for block in blocks:
+        layer_prefix = clean_type_spelling(block['layer_name']).replace('::', '_').replace('<', '_').replace('>', '_').replace(' ', '_')
+        new_fields = []
+        for fname, ftype in block['fields']:
+            if field_counts.get(fname, 0) > 1:
+                new_fname = fix_zig_keyword_name(f"{layer_prefix}_{fname}")
+            else:
+                new_fname = fname
+            new_fields.append((new_fname, ftype))
+        new_blocks.append({
+            'layer_name': block['layer_name'],
+            'depth': block['depth'],
+            'fields': new_fields
+        })
+    return new_blocks
+
+
 def collect_flattened_fields(record_node, layer_name=None, depth=0, visited=None):
     """递归收集结构体及其多层继承基类的字段，支持展平和层级记录"""
     if visited is None:
@@ -137,6 +162,9 @@ def collect_flattened_fields(record_node, layer_name=None, depth=0, visited=None
             'depth': depth,
             'fields': current_fields
         })
+
+    if depth == 0:
+        result = resolve_field_collisions(result)
 
     return result
 
